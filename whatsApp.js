@@ -7,6 +7,17 @@ const { default: axios } = require("axios");
 const url = `https://api.telegram.org/bot${process.env.TOKEN}/sendMessage`;
 const fs = require("fs");
 const FormData = require('form-data');
+const mongoose = require("mongoose")
+const Chat = require("./Chat")
+
+mongoose
+    .connect("mongodb://localhost:27017/AidynBot")
+    .then(() => {
+        console.log("Mongodb OK");
+    })
+    .catch((err) => {
+        console.log("Mongodb Error", err);
+    });
 
 // Инициализация OpenAI API
 const configuration = new Configuration({
@@ -52,7 +63,7 @@ const chatHistories = {};
 const systemMessage = {
     role: "system",
     content:
-        "Приветствие: Здравствуйте! Я Бот 'Тибетская'. Чем можем помочь?Укажите точный адрес для доставки воды.1.Товары: Стаканы и кулеры — tibetskaya.kz/accessories. Напишите для подтверждения.2.Первый заказ: Это первый заказ? Ответьте «да» или «нет».Если «да»: Поликарбонат (7) принимаем, ПЭТ (1) не принимаем. Бутыль стоит 4500 тенге.Если «нет»: Укажите количество бутылей и адрес.3.Минимальный заказ: 2 бутыля. Либо обмен, либо покупка новой за 4500 тенге.4.Доставка: Звоним за час до доставки.5.График работы: Пн–Сб, Вс — выходной.6.Чистка кулера: От 4000 тенге, скидка 50% при заказе воды.7.Вне рабочего времени: Ответим с 8:00 до 22:00.8.Принятие заказа: Заказ принят, свяжитесь с менеджером по +77475315558.10.Контакт: Менеджер: +77475315558.11.Цена за 12.5л.(маленьких) 900 тенге, за 18.9л.(больших) 1300 тенге.",
+        "Приветствие: Здравствуйте! Я Бот 'Тибетская'. Чем можем помочь? Укажите точный адрес для доставки воды. 1. Товары: Стаканы и кулеры — tibetskaya.kz/accessories. Напишите для подтверждения. 2. Информация о бутылках: Если у вас нет бутылей, вы можете приобрести их по цене 4500 тенге за 18,9 литров и 2500 тенге за 12,5 литров. 3. Минимальный заказ: 2 бутыля. Либо обмен, либо покупка новых по указанной цене. 4. Доставка: Звоним за час до доставки. 5. График работы: Пн–Сб, Вс — выходной. 6. Чистка кулера: От 4000 тенге, скидка 50% при заказе воды. 7. Вне рабочего времени: Ответим с 9:00 до 20:00. 8. При принятии заказа обязательный ответ: «Спасибо, ваш заказ принят» (обязательно использовать слова «заказ» и «принят», на казахском «заказыңыз» и «қабылданды»). 9. Цена за 12,5 л (маленьких): 900 тенге, за 18,9 л (больших): 1300 тенге. 11. На вопрос, откуда берётся наша вода: «Все наши продукты проходят строгий контроль качества. Они полностью соответствуют санитарным нормам и стандартам. Источник воды находится в экологически чистом районе.»",
 };
 
 // Переменные для хранения количества уникальных пользователей и отправок в Telegram
@@ -162,18 +173,56 @@ async function getSummary(dialog) {
     return "Извините, превышен лимит попыток обращения к OpenAI.";
 }
 
+const addChat = async (chatId) => {
+    const chat = new Chat({
+        chatId
+    })
+
+    await chat.save()
+}
+
+client.on('message_create', (msg) => {
+    if (msg.fromMe) {
+        if (msg.body.toLocaleLowerCase().includes("включить бота")) {
+            const chatId = msg.to
+            addChat(chatId)
+        }
+        console.log('Я отправил сообщение:', msg.body);
+    }
+});
+
 // Обработка входящих сообщений
 client.on("message", async (msg) => {
 
-    console.log(msg);
-    
-
-    resetCountersIfNeeded(); // Проверяем, нужно ли сбрасывать счетчики
-
     const chatId = msg.from;
 
-    // Добавляем пользователя в список уникальных за день
+    const chat = await Chat.findOne({chatId})
+
+    if (chat === null) {
+        await UnreadMessages.create({
+            chatId: chatId,
+            message: msg.body,
+            timestamp: new Date(),
+        });
+        return
+    }
+    resetCountersIfNeeded(); 
+
+    const isNewUser = !uniqueUsersToday.has(chatId);
+
     uniqueUsersToday.add(chatId);
+
+    if (isNewUser) {
+        // Отправляем приветственное сообщение, если это первое сообщение за день
+        const welcomeMessage = "Я бот 'Тибетская'. Пожалуйста, напишите адрес доставки и количество бутылей, а также укажите, первый ли это ваш заказ и есть ли у вас пустые бутыли.";
+        client.sendMessage(chatId, welcomeMessage);
+
+        // Сохраняем сообщение в историю
+        saveMessageToHistory(chatId, welcomeMessage, "assistant");
+
+        // Прерываем выполнение, чтобы не продолжать дальнейшую обработку первого сообщения
+        return;
+    }
 
     if (msg.body.toLowerCase() === "проверка") {
         // Если пользователь отправил "Проверка", возвращаем количество пользователей и сообщений
@@ -207,17 +256,7 @@ client.on("message", async (msg) => {
 
     } else if (msg.body) {
         saveMessageToHistory(chatId, msg.body, "user");
-        if (
-            msg.body.toLowerCase().includes("кана") ||
-            msg.body.toLowerCase().includes("канат") ||
-            msg.body.toLowerCase().includes("қанат")
-        ) {
-            const message =
-                "Что бы связаться с Канатом прошу вас перейти по этой ссылке:\n\nhttps://wa.me/77015315558";
-            client.sendMessage(chatId, message);
-
-            saveMessageToHistory(chatId, message, "assistant");
-        } else if (msg.body.toLowerCase().includes("счет") || msg.body.toLowerCase().includes("счёт")) {
+        if (msg.body.toLowerCase().includes("счет") || msg.body.toLowerCase().includes("счёт")) {
             const CHAT_ID = "-4589414007";
             const CLIENT_NUMBER = chatId.slice(0, 11);
             const CLIENT_MESSAGE = `Клиент отправил запрос на счет на оплату:\nНомер клиента: +${CLIENT_NUMBER}\nhttps://wa.me/${CLIENT_NUMBER}`;
@@ -255,8 +294,9 @@ client.on("message", async (msg) => {
             const gptResponse = await getGPTResponse(chatHistories[chatId]);
 
             if (
-                gptResponse.toLowerCase().includes("заказ") &&
-                gptResponse.toLowerCase().includes("принят")
+                (gptResponse.toLowerCase().includes("заказ") &&
+                gptResponse.toLowerCase().includes("принят")) || (gptResponse.toLowerCase().includes("заказыңыз") &&
+                gptResponse.toLowerCase().includes("қабылданды"))
             ) {
                 const CHAT_ID = "-4589414007";
                 const CLIENT_NUMBER = chatId.slice(0, 11);
