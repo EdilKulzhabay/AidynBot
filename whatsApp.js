@@ -176,20 +176,31 @@ async function getSummary(dialog) {
 const addChat = async (chatId) => {
     const chat = new Chat({
         chatId
-    })
+    });
 
-    await chat.save()
+    await chat.save();
+}
+
+const removeChat = async (chatId) => {
+    await Chat.deleteOne({ chatId });
 }
 
 client.on('message_create', (msg) => {
     if (msg.fromMe) {
+        const chatId = msg.to;
+
         if (msg.body.toLocaleLowerCase().includes("включить бота")) {
-            const chatId = msg.to
-            addChat(chatId)
+            addChat(chatId);
         }
+
+        if (msg.body.toLocaleLowerCase().includes("отключить бота")) {
+            removeChat(chatId);
+        }
+
         console.log('Я отправил сообщение:', msg.body);
     }
 });
+
 
 // Обработка входящих сообщений
 client.on("message", async (msg) => {
