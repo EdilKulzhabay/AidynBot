@@ -199,11 +199,6 @@ client.on("message", async (msg) => {
     const chat = await Chat.findOne({chatId})
 
     if (chat === null) {
-        await UnreadMessages.create({
-            chatId: chatId,
-            message: msg.body,
-            timestamp: new Date(),
-        });
         return
     }
     resetCountersIfNeeded(); 
